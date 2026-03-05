@@ -1,0 +1,101 @@
+{
+    "supportsHighlight": false,
+    "dataRoles": [
+        {
+            "displayName": "Date Value",
+            "name": "dateField",
+            "kind": "Grouping"
+        }
+    ],
+    "objects": {
+        "general": {
+            "displayName": "General",
+            "properties": {
+                "filter": {
+                    "type": {
+                        "filter": true
+                    }
+                }
+            }
+        },
+        "visualSettings": {
+            "displayName": "Visual Settings",
+            "properties": {
+                "showTailwind": {
+                    "displayName": "Enable Tailwind CDN",
+                    "type": {
+                        "bool": true
+                    }
+                },
+                "accentColor": {
+                    "displayName": "Accent Color",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "buttonPosition": {
+                    "displayName": "Button Position",
+                    "type": {
+                        "enumeration": [
+                            {
+                                "displayName": "Left",
+                                "value": "left"
+                            },
+                            {
+                                "displayName": "Right",
+                                "value": "right"
+                            }
+                        ]
+                    }
+                },
+                "containerBorderWeight": {
+                    "displayName": "Container Border Weight",
+                    "type": {
+                        "numeric": true
+                    }
+                },
+                "containerBorderColor": {
+                    "displayName": "Container Border Color",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                },
+                "datesBgColor": {
+                    "displayName": "Dates Block Background",
+                    "type": {
+                        "fill": {
+                            "solid": {
+                                "color": true
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "dataViewMappings": [
+        {
+            "categorical": {
+                "categories": {
+                    "for": {
+                        "in": "dateField"
+                    },
+                    "dataReductionAlgorithm": {
+                        "top": {
+                            "count": 30000
+                        }
+                    }
+                }
+            }
+        }
+    ],
+    "privileges": []
+}
