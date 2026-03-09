@@ -36,12 +36,6 @@ import FormattingSettingsModel = formattingSettings.Model;
  * Visual Settings Card
  */
 class VisualSettingsCard extends FormattingSettingsCard {
-    showTailwind = new formattingSettings.ToggleSwitch({
-        name: "showTailwind",
-        displayName: "Enable Tailwind CDN",
-        value: true
-    });
-
     accentColor = new formattingSettings.ColorPicker({
         name: "accentColor",
         displayName: "Accent Color",
@@ -78,7 +72,7 @@ class VisualSettingsCard extends FormattingSettingsCard {
 
     name: string = "visualSettings";
     displayName: string = "Visual Settings";
-    slices: Array<FormattingSettingsSlice> = [this.showTailwind, this.accentColor, this.buttonPosition, this.containerBorderWeight, this.containerBorderColor, this.datesBgColor];
+    slices: Array<FormattingSettingsSlice> = [this.accentColor, this.buttonPosition, this.containerBorderWeight, this.containerBorderColor, this.datesBgColor];
 }
 
 /**

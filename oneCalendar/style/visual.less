@@ -23,10 +23,14 @@
 }
 
 .calendar-container.btns-right #btn-collapse {
-    order: 3;
+    order: 4;
 }
 
 .calendar-container.btns-right #btn-toggle-blocks {
+    order: 3;
+}
+
+.calendar-container.btns-right #btn-view-switch {
     order: 2;
 }
 
@@ -207,6 +211,11 @@
     /* ~4px */
 }
 
+.dates-block.dates-disabled {
+    opacity: 0.4;
+    pointer-events: none;
+}
+
 .dates-inputs {
     display: flex;
     align-items: center;
@@ -218,6 +227,8 @@
 
 .dates-inputs input[type="date"] {
     flex: 1;
+    min-width: 0;
+    width: 0;
     padding: 0.571em 0.857em;
     /* 8px 12px */
     border: 1px solid #d1d5db;

@@ -6,7 +6,6 @@ import FormattingSettingsModel = formattingSettings.Model;
  * Visual Settings Card
  */
 declare class VisualSettingsCard extends FormattingSettingsCard {
-    showTailwind: formattingSettings.ToggleSwitch;
     accentColor: formattingSettings.ColorPicker;
     buttonPosition: formattingSettings.ItemDropdown;
     containerBorderWeight: formattingSettings.NumUpDown;

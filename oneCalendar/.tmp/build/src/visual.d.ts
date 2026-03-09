@@ -5,6 +5,7 @@ import VisualUpdateOptions = powerbi.extensibility.visual.VisualUpdateOptions;
 import IVisual = powerbi.extensibility.visual.IVisual;
 export declare class Visual implements IVisual {
     private static readonly BLOCK_IDS;
+    private static readonly MONTH_NAMES;
     private static readonly SVG_EXPAND;
     private static readonly SVG_COLLAPSE;
     private static readonly SVG_TOGGLE_EXPAND;
@@ -12,6 +13,7 @@ export declare class Visual implements IVisual {
     private static readonly SVG_RESET;
     private static readonly SVG_ARROW_DOWN;
     private static readonly SVG_ARROW_UP;
+    private static readonly SVG_VIEW_SWITCH;
     private target;
     private host;
     private formattingSettings;
@@ -19,16 +21,30 @@ export declare class Visual implements IVisual {
     private dataViewParsed;
     private mainPanelExpanded;
     private blocksExpanded;
+    private viewMode;
     private dataPoints;
     private masterDataPoints;
     private currentCategory;
+    private mainPanelEl;
+    private btnCollapseEl;
+    private btnToggleBlocksEl;
+    private btnResetEl;
+    private btnViewSwitchEl;
+    private filterStatusEl;
+    private containerEl;
     private selections;
+    private lastSelections;
     private lastSelectedIndex;
     private dateFrom;
     private dateTo;
     constructor(options: VisualConstructorOptions);
     private bindStaticEvents;
+    private clearAllSelections;
     private refreshUI;
+    private refreshUILast;
+    /** Shared filter application — deduplicates logic between Normal & Last modes */
+    private applyJsonFilterFromDataPoints;
+    private getISOWeekYear;
     private extractDateInformation;
     private getISOWeekNumber;
     private formatDateForInput;
