@@ -420,7 +420,6 @@ export class Visual implements IVisual {
 
         html += `
             <div class="dates-block">
-                <span class="block-title">Dates</span>
                 <div class="dates-inputs">
                     <input id="date-from" type="date" value="${currentFromValue}" min="${inputMinBound}" max="${inputMaxBound}" />
                     <span class="separator">–</span>
@@ -441,7 +440,7 @@ export class Visual implements IVisual {
                 if (this.selections.month.size > 0) activeFilters.push('Mon');
                 if (this.selections.week.size > 0) activeFilters.push('Week');
                 if (this.dateFrom || this.dateTo) activeFilters.push('Date');
-                filterStatus.textContent = activeFilters.length > 0 ? 'Filters: ' + activeFilters.join(', ') : 'No filters';
+                filterStatus.textContent = activeFilters.length > 0 ? 'Filters: ' + activeFilters.join(', ') : 'No date filters applied';
                 filterStatus.classList.toggle('active', activeFilters.length > 0);
             }
 
