@@ -44,8 +44,6 @@ export declare class Visual implements IVisual {
     private refreshUILast;
     /** Shared filter application — deduplicates logic between Normal & Last modes */
     private applyJsonFilterFromDataPoints;
-    private getISOWeekYear;
-    private extractDateInformation;
     private getISOWeekNumber;
     private formatDateForInput;
     private renderDynamicContent;

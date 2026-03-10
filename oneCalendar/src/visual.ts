@@ -28,6 +28,16 @@ interface DateDataPoint {
     weekNum: number;
     weekLabel: string;
     isoDateStr: string;
+    dateInt: number; // YYYYMMDD for timezone-safe comparison
+}
+
+interface DisplayInfo {
+    years: string[];
+    quarters: string[];
+    months: string[];
+    weeks: string[];
+    minDate: Date | null;
+    maxDate: Date | null;
 }
 
 export class Visual implements IVisual {
@@ -328,7 +338,7 @@ export class Visual implements IVisual {
             const qEnd = new Date(endYear, endQAdj * 3, 0, 23, 59, 59, 999); // last day of end quarter
 
             // Start of (maxN quarters before current)
-            let startQTotal = (currentYear * 4 + currentQuarter) - maxN;
+            const startQTotal = (currentYear * 4 + currentQuarter) - maxN;
             const startYear = Math.floor((startQTotal - 1) / 4);
             const startQ = ((startQTotal - 1) % 4) + 1;
             const qStart = new Date(startYear, (startQ - 1) * 3, 1);
@@ -353,31 +363,33 @@ export class Visual implements IVisual {
             rangeEnd = rangeEnd ? (mEnd < rangeEnd ? mEnd : rangeEnd) : mEnd;
         }
 
-        // Week: N LW = last N weeks, excluding current week
+        // Week: N LW = last N complete weeks (Mon-Sun), excluding current week
         if (this.lastSelections.week.size > 0) {
             let maxN = 0;
             this.lastSelections.week.forEach(v => {
                 const n = parseInt(v);
                 if (n > maxN) maxN = n;
             });
-            // Find Monday of current ISO week
-            const dayOfWeek = now.getDay() || 7; // 1=Mon..7=Sun
-            const mondayThisWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dayOfWeek + 1);
-            // End: Sunday before current week
-            const wEnd = new Date(mondayThisWeek.getTime() - 1); // last ms of previous week
-            wEnd.setHours(23, 59, 59, 999);
-            // Start: Monday of (maxN weeks before current)
-            const wStart = new Date(mondayThisWeek.getTime() - maxN * 7 * 86400000);
+            // Find Monday of current week (getDay: 0=Sun, 1=Mon..6=Sat)
+            const dow = now.getDay() || 7; // convert Sun=0 to 7 for ISO
+            const mondayThisWeek = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow + 1);
+            // End: Sunday before this Monday = yesterday for Monday, last Sunday otherwise
+            const wEnd = new Date(mondayThisWeek.getFullYear(), mondayThisWeek.getMonth(), mondayThisWeek.getDate() - 1, 23, 59, 59, 999);
+            // Start: Monday of N weeks ago
+            const wStart = new Date(mondayThisWeek.getFullYear(), mondayThisWeek.getMonth(), mondayThisWeek.getDate() - maxN * 7);
 
             rangeStart = rangeStart ? (wStart > rangeStart ? wStart : rangeStart) : wStart;
             rangeEnd = rangeEnd ? (wEnd < rangeEnd ? wEnd : rangeEnd) : wEnd;
         }
 
-        // Filter data points
+        // Filter data points using integer YYYYMMDD comparison (timezone-immune)
+        const toDateInt = (d: Date) => d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
         let finalDataPoints: DateDataPoint[];
         if (rangeStart && rangeEnd) {
+            const startInt = toDateInt(rangeStart);
+            const endInt = toDateInt(rangeEnd);
             finalDataPoints = this.dataPoints.filter(dp =>
-                dp.date >= rangeStart! && dp.date <= rangeEnd!
+                dp.dateInt >= startInt && dp.dateInt <= endInt
             );
         } else {
             finalDataPoints = [];
@@ -423,6 +435,9 @@ export class Visual implements IVisual {
                 if (!seen.has(iso)) { seen.add(iso); uniqueDates.push(iso); }
             }
 
+            // Diagnostic: output the filter array to console
+            console.log(`[oneCalendar] Filter applied (${this.viewMode} mode): ${uniqueDates.length} unique dates`, uniqueDates);
+
             this.host.applyJsonFilter({
                 $schema: "http://powerbi.com/product/schema#basic",
                 target: { table: tableName, column: this.currentCategory.source.displayName },
@@ -431,51 +446,12 @@ export class Visual implements IVisual {
                 filterType: 1
             } as any, "general", "filter", powerbi.FilterAction.merge);
         } else {
+            console.log(`[oneCalendar] Filter removed (${this.viewMode} mode)`);
             this.host.applyJsonFilter(null, "general", "filter", powerbi.FilterAction.remove);
         }
     }
 
-    private getISOWeekYear(date: Date): number {
-        const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-        const dayNum = d.getUTCDay() || 7;
-        d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-        return d.getUTCFullYear();
-    }
-
-    private extractDateInformation(dates: Date[]) {
-        const years = new Set<string>();
-        const quarters = new Map<string, Date>();
-        const months = new Map<string, Date>();
-        const weeks = new Set<number>();
-
-        dates.forEach(date => {
-            if (!date || !(date instanceof Date)) return;
-            const y = date.getFullYear();
-            years.add(String(y));
-
-            const m = date.getMonth();
-            const q = Math.floor(m / 3) + 1;
-
-            const qLabel = `Q${q} ${y}`;
-            if (!quarters.has(qLabel)) quarters.set(qLabel, new Date(y, m, 1));
-
-            const mLabel = `${date.toLocaleString('default', { month: 'short' })} ${y}`;
-            if (!months.has(mLabel)) months.set(mLabel, new Date(y, m, 1));
-
-            const weekNum = this.getISOWeekNumber(date);
-            weeks.add(weekNum);
-        });
-
-        const sortedQuarters = Array.from(quarters.entries()).sort((a, b) => a[1].getTime() - b[1].getTime()).map(e => e[0]);
-        const sortedMonths = Array.from(months.entries()).sort((a, b) => a[1].getTime() - b[1].getTime()).map(e => e[0]);
-
-        return {
-            years: Array.from(years).sort(),
-            quarters: sortedQuarters,
-            months: sortedMonths,
-            weeks: Array.from(weeks).sort((a, b) => a - b).map(w => `W${w}`)
-        };
-    }
+    // getISOWeekYear and extractDateInformation removed — dead code after optimization
 
     private getISOWeekNumber(date: Date): number {
         const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -493,7 +469,7 @@ export class Visual implements IVisual {
         return `${y}-${m}-${d}`;
     }
 
-    private renderDynamicContent(dateInfo: any) {
+    private renderDynamicContent(dateInfo: DisplayInfo) {
         const mainPanel = this.mainPanelEl;
         const btnCollapse = this.btnCollapseEl;
         const btnToggleBlocks = this.btnToggleBlocksEl;
@@ -584,32 +560,31 @@ export class Visual implements IVisual {
         html += buildBlock('month', isLast ? 'Month (last)' : 'Month', dateInfo.months);
         html += buildBlock('week', isLast ? 'Week (last)' : 'Week', dateInfo.weeks);
 
-        // Apply visual constraints but populate with active specific selections if made
-        const inputMinBound = this.formatDateForInput(dateInfo.minDate);
-        const inputMaxBound = this.formatDateForInput(dateInfo.maxDate);
+        // Date inputs block
+        const minBound = this.formatDateForInput(dateInfo.minDate);
+        const maxBound = this.formatDateForInput(dateInfo.maxDate);
 
-        const currentFromValue = this.dateFrom ? this.formatDateForInput(this.dateFrom) : inputMinBound;
-        const currentToValue = this.dateTo ? this.formatDateForInput(this.dateTo) : inputMaxBound;
-
-        // Date inputs: in Last mode, disable and show today's date
-        const todayStr = this.formatDateForInput(new Date());
         if (isLast) {
+            const fromVal = minBound || this.formatDateForInput(new Date());
+            const toVal = maxBound || this.formatDateForInput(new Date());
             html += `
                 <div class="dates-block dates-disabled">
                     <div class="dates-inputs">
-                        <input id="date-from" type="date" value="${todayStr}" disabled />
+                        <input id="date-from" type="date" value="${fromVal}" disabled />
                         <span class="separator">–</span>
-                        <input id="date-to" type="date" value="${todayStr}" disabled />
+                        <input id="date-to" type="date" value="${toVal}" disabled />
                     </div>
                 </div>
             `;
         } else {
+            const fromVal = this.dateFrom ? this.formatDateForInput(this.dateFrom) : minBound;
+            const toVal = this.dateTo ? this.formatDateForInput(this.dateTo) : maxBound;
             html += `
                 <div class="dates-block">
                     <div class="dates-inputs">
-                        <input id="date-from" type="date" value="${currentFromValue}" min="${inputMinBound}" max="${inputMaxBound}" />
+                        <input id="date-from" type="date" value="${fromVal}" min="${minBound}" max="${maxBound}" />
                         <span class="separator">–</span>
-                        <input id="date-to" type="date" value="${currentToValue}" min="${inputMinBound}" max="${inputMaxBound}" />
+                        <input id="date-to" type="date" value="${toVal}" min="${minBound}" max="${maxBound}" />
                     </div>
                 </div>
             `;
@@ -688,11 +663,11 @@ export class Visual implements IVisual {
                 const idx = parseInt(indexStr);
 
                 if (this.viewMode === 'last') {
-                    // Single-select in Last mode: toggle off or replace
-                    if (selSet[blockId].has(valStr)) {
-                        selSet[blockId].delete(valStr);
-                    } else {
-                        selSet[blockId].clear();
+                    // Global single-select in Last mode: only one item across all blocks
+                    const wasSelected = selSet[blockId].has(valStr);
+                    // Clear ALL blocks
+                    for (const bid of Visual.BLOCK_IDS) selSet[bid].clear();
+                    if (!wasSelected) {
                         selSet[blockId].add(valStr);
                     }
                     this.lastSelectedIndex[blockId] = idx;
@@ -731,9 +706,8 @@ export class Visual implements IVisual {
         if (options.viewport) {
             const scale = options.viewport.width / 350;
             const baseFontSize = Math.max(6, 14 * scale); // clamp to 6px min
-            const container = this.target.querySelector('.calendar-container') as HTMLElement;
-            if (container) {
-                container.style.setProperty('--base-font-size', `${baseFontSize}px`);
+            if (this.containerEl) {
+                this.containerEl.style.setProperty('--base-font-size', `${baseFontSize}px`);
             }
         }
 
@@ -776,7 +750,8 @@ export class Visual implements IVisual {
                                 monthLabel: `${Visual.MONTH_NAMES[m]} ${y}`,
                                 weekNum: wn,
                                 weekLabel: `W${wn}`,
-                                isoDateStr: normalizedDate.toISOString()
+                                isoDateStr: normalizedDate.toISOString(),
+                                dateInt: y * 10000 + (m + 1) * 100 + d.getDate()
                             });
                         }
                     });

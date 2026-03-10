@@ -1,1 +1,26 @@
-{"visual":{"name":"oneCalendar","displayName":"oneCalendar","guid":"oneCalendarD83DAFDDCC8D4309935B4488E6A78767","visualClassName":"Visual","version":"1.0.0.0","description":"","supportUrl":"","gitHubUrl":""},"apiVersion":"5.3.0","author":{"name":"","email":""},"assets":{"icon":"assets/icon.png"},"externalJS":null,"style":"style/visual.less","capabilities":"capabilities.json","dependencies":null,"stringResources":[],"version":"1.0.0.0"}
+{
+    "visual": {
+        "name": "oneCalendar",
+        "displayName": "oneCalendar",
+        "guid": "oneCalendarD83DAFDDCC8D4309935B4488E6A78767",
+        "visualClassName": "Visual",
+        "version": "1.0.0.0",
+        "description": "",
+        "supportUrl": "",
+        "gitHubUrl": ""
+    },
+    "apiVersion": "5.3.0",
+    "author": {
+        "name": "",
+        "email": ""
+    },
+    "assets": {
+        "icon": "assets/icon.png"
+    },
+    "externalJS": null,
+    "style": "style/visual.less",
+    "capabilities": "capabilities.json",
+    "dependencies": null,
+    "stringResources": [],
+    "version": "1.0.0.0"
+}

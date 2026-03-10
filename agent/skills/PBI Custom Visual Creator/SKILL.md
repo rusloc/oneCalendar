@@ -7,7 +7,7 @@ description: Used when asked to create a special custom visual for Power BI. Use
 
 When asked to create a custom visual for Power BI use these steps:
 
-## Steps:
+# Creation Steps:
 
 1.	Setup environment. If needed ask user for permissions and/or ask user to run commands
 2.	Learn structure of the default/template project: https://learn.microsoft.com/en-us/power-bi/developer/visuals/visual-project-structure
@@ -21,14 +21,40 @@ When asked to create a custom visual for Power BI use these steps:
 10.	Learn how to create and edit dataViewMappings: https://learn.microsoft.com/en-us/power-bi/developer/visuals/dataview-mappings
 11.	Learn how to create a simple KPI card custom visual: https://learn.microsoft.com/en-us/power-bi/developer/visuals/develop-circle-card
 12.	Learn how to create simple bar chart: https://learn.microsoft.com/en-us/power-bi/developer/visuals/create-bar-chart?tabs=CreateNewVisual
-13.	Create the Core visual logic / code according to the user definition/task. Core template code in ./src/visual.ts
-14.	Create Core visual settings (properties) to match the user's definition/task. Core template code in ./src/settings.ts
+13.	Create the Core visual logic / code according to the user definition/task. Use Core template code in ./src/visual.ts
+14.	Create Core visual settings (properties) to match the user's definition/task. Use Core template code in ./src/settings.ts
 15.	Define basic capabilities to match user's request
-16.	Define dataViewMappings if needed 
+16.	Define dataViewMappings 
 17.	Setup basic formatting options. Core formatting options in ./style/visual.less
+18. Implement logging functionality; add comment/discription and highlight the block responsible for logging functionality; make sure it s possible to comment/uncomment the whole logging functionality block (code)
+18. Check the speed / performance of the solution. Refer to the documentation when checking: https://learn.microsoft.com/en-us/power-bi/developer/visuals/performance-tips
+
+# Finalization / packaging steps:
+
+1. Analyze the speed / performance of the solution: check for excessive logic, unused variables and functions; check speed / performance of loops & flow control blocks; shorten code; comment every logical block (logic and steps); add overall description (comment) of the solution 
+2. Ask user to provide information needed to package the visual
+3.  Package visual; see check guide and apply: https://learn.microsoft.com/en-us/power-bi/developer/visuals/package-visual
 
 # References
 
 Always check reference.md when creating/amending custom visual. Before completing any user request check if any link from reference.md is applicable to the task.
 If link is applicable: read, learn and apply knowledge.
 
+# Exception logging functionality 
+
+Use this snippet to add Logging exception functionality:
+
+export function logExceptions(): MethodDecorator {
+    return function (target: Object, propertyKey: string, descriptor: TypedPropertyDescriptor<any>): TypedPropertyDescriptor<any> {
+        return {
+            value: function () {
+                try {
+                    return descriptor.value.apply(this, arguments);
+                } catch (e) {
+                    console.error(e);
+                    throw e;
+                }
+            }
+        }
+    }
+}
