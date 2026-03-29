@@ -1,6 +1,8 @@
 {
     "supportsHighlight": false,
     "supportsSynchronizingFilterState": true,
+    "supportsLandingPage": true,
+    "supportsEmptyDataView": true,
     "dataRoles": [
         {
             "displayName": "Date Value",

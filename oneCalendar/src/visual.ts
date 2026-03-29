@@ -108,6 +108,14 @@ export class Visual implements IVisual {
     private renderedDateBounds: string = '';
     private delegatedListenersBound: boolean = false;
 
+    // Bookmark: track last filter applied by the visual itself, so we can distinguish
+    // a PBI echo-back from a genuine bookmark restore in update()
+    private lastAppliedFilterKey: string = '';
+
+    // Landing page state
+    private isLandingPageOn: boolean = false;
+    private landingPageEl: HTMLElement | null = null;
+
     constructor(options: VisualConstructorOptions) {
         this.host = options.host;
         this.formattingSettingsService = new FormattingSettingsService();
@@ -320,7 +328,15 @@ export class Visual implements IVisual {
     }
 
     private refreshUILast(applyFilter: boolean) {
-        const now = new Date();
+        // Anchor to dataset's most recent date, not wall-clock
+        let maxDateInt = 0;
+        for (let i = 0; i < this.dataPoints.length; i++) {
+            if (this.dataPoints[i].dateInt > maxDateInt) maxDateInt = this.dataPoints[i].dateInt;
+        }
+        const anchorYear = Math.floor(maxDateInt / 10000);
+        const anchorMonth = Math.floor((maxDateInt % 10000) / 100) - 1;
+        const anchorDay = maxDateInt % 100;
+        const now = new Date(anchorYear, anchorMonth, anchorDay);
         const currentYear = now.getFullYear();
         const currentMonth = now.getMonth();
         const currentQuarter = Math.floor(currentMonth / 3) + 1;
@@ -441,7 +457,9 @@ export class Visual implements IVisual {
         }
     }
 
-    /** Shared filter application — deduplicates logic between Normal & Last modes */
+    /** Shared filter application — deduplicates logic between Normal & Last modes.
+     *  Uses hybrid strategy: AdvancedFilter (min-max range, ~200 bytes) when selected dates
+     *  are contiguous; falls back to BasicFilter "In" (full date list) when gaps exist. */
     private applyJsonFilterFromDataPoints(dataPoints: DateDataPoint[] | null) {
         if (!this.currentCategory) return;
         if (dataPoints && dataPoints.length > 0) {
@@ -450,31 +468,167 @@ export class Visual implements IVisual {
             if (queryName.includes('.')) tableName = queryName.substring(0, queryName.indexOf('.'));
             tableName = tableName.replace(/"/g, "");
 
-            // Use pre-computed isoDateStr — no Date construction needed
+            // Deduplicate and find min/max dateInt in a single pass
             const seen = new Set<string>();
             const uniqueDates: string[] = [];
+            let minInt = Infinity, maxInt = -Infinity;
             for (let i = 0; i < dataPoints.length; i++) {
-                const iso = dataPoints[i].isoDateStr;
-                if (!seen.has(iso)) { seen.add(iso); uniqueDates.push(iso); }
+                const dp = dataPoints[i];
+                if (!seen.has(dp.isoDateStr)) {
+                    seen.add(dp.isoDateStr);
+                    uniqueDates.push(dp.isoDateStr);
+                }
+                if (dp.dateInt < minInt) minInt = dp.dateInt;
+                if (dp.dateInt > maxInt) maxInt = dp.dateInt;
             }
 
-            // Diagnostic: output the filter array to console
-            console.log(`[oneCalendar] Filter applied (${this.viewMode} mode): ${uniqueDates.length} unique dates`, uniqueDates);
+            // Contiguity check: count master data points within the same min-max range.
+            // If masterCountInRange === uniqueDates.length, no gaps exist → use range filter.
+            let masterCountInRange = 0;
+            const masterSeen = new Set<string>();
+            for (let i = 0; i < this.masterDataPoints.length; i++) {
+                const mdp = this.masterDataPoints[i];
+                if (mdp.dateInt >= minInt && mdp.dateInt <= maxInt && !masterSeen.has(mdp.isoDateStr)) {
+                    masterSeen.add(mdp.isoDateStr);
+                    masterCountInRange++;
+                }
+            }
 
-            this.host.applyJsonFilter({
-                $schema: "http://powerbi.com/product/schema#basic",
-                target: { table: tableName, column: this.currentCategory.source.displayName },
-                operator: "In",
-                values: uniqueDates,
-                filterType: 1
-            } as any, "general", "filter", powerbi.FilterAction.merge);
+            const isContiguous = masterCountInRange === uniqueDates.length;
+            const target = { table: tableName, column: this.currentCategory.source.displayName };
+
+            // Track filter fingerprint for bookmark echo-back detection
+            this.lastAppliedFilterKey = isContiguous
+                ? `range|${minInt}|${maxInt}`
+                : `in|${uniqueDates.length}|${uniqueDates[0]}|${uniqueDates[uniqueDates.length - 1]}`;
+
+            if (isContiguous) {
+                // AdvancedFilter: 2 values (~200 bytes) instead of N dates (~600KB)
+                const minIso = uniqueDates.reduce((a, b) => a < b ? a : b);
+                const maxIso = uniqueDates.reduce((a, b) => a > b ? a : b);
+
+                console.log(`[oneCalendar] Range filter (${this.viewMode}): ${minIso} → ${maxIso} (${uniqueDates.length} dates, contiguous)`);
+
+                this.host.applyJsonFilter({
+                    $schema: "http://powerbi.com/product/schema#advanced",
+                    target: target,
+                    logicalOperator: "And",
+                    conditions: [
+                        { operator: "GreaterThanOrEqual", value: minIso },
+                        { operator: "LessThanOrEqual", value: maxIso }
+                    ],
+                    filterType: 0
+                } as any, "general", "filter", powerbi.FilterAction.merge);
+            } else {
+                // BasicFilter "In": non-contiguous selection, must enumerate all dates
+                console.log(`[oneCalendar] In filter (${this.viewMode}): ${uniqueDates.length} dates (non-contiguous)`);
+
+                this.host.applyJsonFilter({
+                    $schema: "http://powerbi.com/product/schema#basic",
+                    target: target,
+                    operator: "In",
+                    values: uniqueDates,
+                    filterType: 1
+                } as any, "general", "filter", powerbi.FilterAction.merge);
+            }
         } else {
+            this.lastAppliedFilterKey = '';
             console.log(`[oneCalendar] Filter removed (${this.viewMode} mode)`);
             this.host.applyJsonFilter(null, "general", "filter", powerbi.FilterAction.remove);
         }
     }
 
     // getISOWeekYear and extractDateInformation removed — dead code after optimization
+
+    /** Bookmark support: restore internal selection state from saved jsonFilters.
+     *  Determines the lowest selection level that fully explains the bookmarked dates,
+     *  respecting the cascading filter logic (year > quarter > month > week).
+     *  Upper levels auto-select only to scope; lower levels stay unselected (filtered, not selected). */
+    private restoreBookmarkFilter(options: VisualUpdateOptions): boolean {
+        const jsonFilters = options.jsonFilters;
+        if (!jsonFilters || jsonFilters.length === 0) {
+            return false;
+        }
+
+        const filter = jsonFilters[0] as any;
+        if (!filter || filter.filterType !== 1 || !filter.values || filter.values.length === 0) {
+            return false;
+        }
+
+        // Build a key from incoming filter to compare against last self-applied filter
+        const incomingKey = filter.values.slice().sort().join('|');
+        if (incomingKey === this.lastAppliedFilterKey) {
+            // This is our own filter echoed back by PBI — not a bookmark restore
+            return false;
+        }
+
+        // Build set of bookmarked date integers (YYYYMMDD)
+        const bookmarkedDates = new Set<number>();
+        for (const val of filter.values) {
+            const d = new Date(val);
+            if (!isNaN(d.getTime())) {
+                bookmarkedDates.add(d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate());
+            }
+        }
+        if (bookmarkedDates.size === 0) return false;
+
+        // Collect which dataPoints match the bookmark
+        const matchedDPs: DateDataPoint[] = [];
+        for (const dp of this.dataPoints) {
+            if (bookmarkedDates.has(dp.dateInt)) {
+                matchedDPs.push(dp);
+            }
+        }
+        if (matchedDPs.length === 0) return false;
+
+        // Determine the lowest level that fully explains the bookmarked dates.
+        // For each level, check if selecting the unique values at that level would
+        // produce exactly the bookmarked date set (given the full dataset).
+        this.clearAllSelections();
+
+        const matchedYears = new Set(matchedDPs.map(dp => dp.yearStr));
+        const matchedQuarters = new Set(matchedDPs.map(dp => dp.quarterLabel));
+        const matchedMonths = new Set(matchedDPs.map(dp => dp.monthLabel));
+        const matchedWeeks = new Set(matchedDPs.map(dp => dp.weekLabel));
+
+        // Helper: count all dataPoints matching a set at a given level
+        const countByLevel = (level: 'yearStr' | 'quarterLabel' | 'monthLabel' | 'weekLabel', vals: Set<string>) => {
+            let count = 0;
+            for (const dp of this.dataPoints) { if (vals.has(dp[level])) count++; }
+            return count;
+        };
+
+        const targetCount = matchedDPs.length;
+
+        // Try year-only: if selecting these years gives exactly the bookmarked dates
+        if (countByLevel('yearStr', matchedYears) === targetCount) {
+            this.selections.year = matchedYears;
+        }
+        // Try quarter (with parent years auto-selected for scoping)
+        else if (countByLevel('quarterLabel', matchedQuarters) === targetCount) {
+            this.selections.year = matchedYears;
+            this.selections.quarter = matchedQuarters;
+        }
+        // Try month
+        else if (countByLevel('monthLabel', matchedMonths) === targetCount) {
+            this.selections.year = matchedYears;
+            this.selections.quarter = matchedQuarters;
+            this.selections.month = matchedMonths;
+        }
+        // Fall back to week (most granular)
+        else {
+            this.selections.year = matchedYears;
+            this.selections.quarter = matchedQuarters;
+            this.selections.month = matchedMonths;
+            this.selections.week = matchedWeeks;
+        }
+
+        console.log(`[oneCalendar] Bookmark restored: ${bookmarkedDates.size} dates, selections:`,
+            { years: [...this.selections.year], quarters: [...this.selections.quarter],
+              months: [...this.selections.month], weeks: [...this.selections.week] });
+
+        return true;
+    }
 
     private getISOWeekNumber(date: Date): number {
         const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -766,6 +920,9 @@ export class Visual implements IVisual {
     }
 
     public update(options: VisualUpdateOptions) {
+        // Landing page: show when no data is bound, hide when data arrives
+        if (this.handleLandingPage(options)) return;
+
         this.formattingSettings = this.formattingSettingsService.populateFormattingSettingsModel(VisualFormattingSettingsModel, options.dataViews[0]);
 
         // Dynamically scale UI base font-size to the viewport width
@@ -833,7 +990,9 @@ export class Visual implements IVisual {
                     this.dataPoints = this.masterDataPoints;
 
                     if (this.dataPoints.length > 0) {
-                        this.refreshUI(false); // Parse UI visually but don't re-apply filters back
+                        // Bookmark support: restore selection state from saved jsonFilters
+                        this.restoreBookmarkFilter(options);
+                        this.refreshUI(false); // Render UI without re-applying filter back to host
                     } else {
                         this.clearPanel("Supplied data could not be parsed as dates.");
                     }
@@ -847,6 +1006,53 @@ export class Visual implements IVisual {
             console.error("Error updating visual", e);
             this.clearPanel("An error occurred extracting data.");
         }
+    }
+
+    /** Landing page: shown when no data is bound. Returns true if landing page is active (caller should return early). */
+    private handleLandingPage(options: VisualUpdateOptions): boolean {
+        const hasData = options.dataViews
+            && options.dataViews[0]
+            && options.dataViews[0].metadata
+            && options.dataViews[0].metadata.columns
+            && options.dataViews[0].metadata.columns.length > 0;
+
+        if (!hasData) {
+            if (!this.isLandingPageOn) {
+                this.isLandingPageOn = true;
+                // Hide the normal calendar UI
+                if (this.containerEl) this.containerEl.style.display = 'none';
+                // Create landing page
+                const lp = document.createElement('div');
+                lp.className = 'landing-page';
+                lp.innerHTML = `
+                    <h1 class="landing-title">oneCalendar</h1>
+                    <svg class="landing-icon" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+                        <rect x="4" y="4" width="112" height="112" rx="24" fill="#fce4ec" stroke="#e57373" stroke-width="3"/>
+                        <text x="60" y="72" text-anchor="middle" font-family="'Segoe UI',sans-serif" font-size="48" font-weight="700" fill="#c62828">1C</text>
+                    </svg>
+                    <p class="landing-instruction">Add a <strong>Date</strong> field to start filtering</p>
+                    <p class="landing-developer"><a href="https://www.linkedin.com/in/kirill-bezzubkin-b6860b235" target="_blank" rel="noopener noreferrer"><svg viewBox="0 0 24 24" width="14" height="14" fill="#0A66C2"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg> Kirill</a></p>
+                    <a class="landing-link" href="https://github.com/rusloc/oneCalendar" target="_blank" rel="noopener noreferrer">
+                        <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+                        GitHub
+                    </a>
+                `;
+                this.target.appendChild(lp);
+                this.landingPageEl = lp;
+            }
+            return true;
+        }
+
+        // Data is present — remove landing page if it was showing
+        if (this.isLandingPageOn) {
+            this.isLandingPageOn = false;
+            if (this.landingPageEl) {
+                this.landingPageEl.remove();
+                this.landingPageEl = null;
+            }
+            if (this.containerEl) this.containerEl.style.display = '';
+        }
+        return false;
     }
 
     private clearPanel(msg: string) {
