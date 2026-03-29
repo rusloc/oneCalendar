@@ -1,5 +1,6 @@
 # Agent / AI tooling
 agent/
+.claude/
 
 # Original mockup readme
 mockup/README (original).MD
