@@ -37,6 +37,10 @@ export declare class Visual implements IVisual {
     private lastSelectedIndex;
     private dateFrom;
     private dateTo;
+    private renderedBlockItems;
+    private renderedViewMode;
+    private renderedDateBounds;
+    private delegatedListenersBound;
     constructor(options: VisualConstructorOptions);
     private bindStaticEvents;
     private clearAllSelections;
@@ -46,6 +50,10 @@ export declare class Visual implements IVisual {
     private applyJsonFilterFromDataPoints;
     private getISOWeekNumber;
     private formatDateForInput;
+    /** Update the filter status badge in the header */
+    private updateFilterStatus;
+    /** Bind delegated event listeners on mainPanel once (P4) */
+    private bindDelegatedListeners;
     private renderDynamicContent;
     update(options: VisualUpdateOptions): void;
     private clearPanel;

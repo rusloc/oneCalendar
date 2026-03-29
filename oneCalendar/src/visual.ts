@@ -102,6 +102,12 @@ export class Visual implements IVisual {
     private dateFrom: Date | null = null;
     private dateTo: Date | null = null;
 
+    // DOM-diffing state for fast-path rendering (P4)
+    private renderedBlockItems: { [key: string]: string[] } = {};
+    private renderedViewMode: string = '';
+    private renderedDateBounds: string = '';
+    private delegatedListenersBound: boolean = false;
+
     constructor(options: VisualConstructorOptions) {
         this.host = options.host;
         this.formattingSettingsService = new FormattingSettingsService();
@@ -166,7 +172,24 @@ export class Visual implements IVisual {
             if (!this.dataViewParsed) return;
             const anyCollapsed = Object.values(this.blocksExpanded).some(state => state === false);
             this.blocksExpanded = { year: anyCollapsed, quarter: anyCollapsed, month: anyCollapsed, week: anyCollapsed };
-            this.refreshUI(false);
+            // P4: toggle CSS classes directly instead of full refreshUI
+            if (this.mainPanelEl) {
+                Visual.BLOCK_IDS.forEach(blockId => {
+                    const content = this.mainPanelEl!.querySelector(`#content-${blockId}`);
+                    const icon = this.mainPanelEl!.querySelector(`#icon-${blockId}`);
+                    if (anyCollapsed) {
+                        content?.classList.remove('collapsed');
+                        if (icon) icon.innerHTML = Visual.SVG_ARROW_UP;
+                    } else {
+                        content?.classList.add('collapsed');
+                        if (icon) icon.innerHTML = Visual.SVG_ARROW_DOWN;
+                    }
+                });
+            }
+            if (this.btnToggleBlocksEl) {
+                this.btnToggleBlocksEl.innerHTML = anyCollapsed ? Visual.SVG_TOGGLE_COLLAPSE : Visual.SVG_TOGGLE_EXPAND;
+                this.btnToggleBlocksEl.setAttribute('data-expanded', String(anyCollapsed));
+            }
         });
     }
 
@@ -469,6 +492,99 @@ export class Visual implements IVisual {
         return `${y}-${m}-${d}`;
     }
 
+    /** Update the filter status badge in the header */
+    private updateFilterStatus(cs: { [key: string]: Set<string> }) {
+        const filterStatus = this.filterStatusEl;
+        if (!filterStatus) return;
+        const activeFilters: string[] = [];
+        if (cs.year.size > 0) activeFilters.push('YR');
+        if (cs.quarter.size > 0) activeFilters.push('QT');
+        if (cs.month.size > 0) activeFilters.push('MT');
+        if (cs.week.size > 0) activeFilters.push('WK');
+        if (this.dateFrom || this.dateTo) activeFilters.push('DT');
+        const prefix = this.viewMode === 'last' ? 'Last: ' : 'Filters: ';
+        filterStatus.textContent = activeFilters.length > 0 ? prefix + activeFilters.join(', ') : 'No date filters applied';
+        filterStatus.classList.toggle('active', activeFilters.length > 0);
+    }
+
+    /** Bind delegated event listeners on mainPanel once (P4) */
+    private bindDelegatedListeners() {
+        const panel = this.mainPanelEl;
+        if (!panel) return;
+
+        // Click delegation: block headers + block items
+        panel.addEventListener('click', (e: MouseEvent) => {
+            const target = e.target as HTMLElement;
+
+            // --- Block header click (expand/collapse) ---
+            const header = target.closest('.block-header') as HTMLElement | null;
+            if (header) {
+                const blockId = header.id.replace('header-', '');
+                this.blocksExpanded[blockId] = !this.blocksExpanded[blockId];
+                const content = panel.querySelector(`#content-${blockId}`);
+                const icon = panel.querySelector(`#icon-${blockId}`);
+                if (this.blocksExpanded[blockId]) {
+                    content?.classList.remove('collapsed');
+                    if (icon) icon.innerHTML = Visual.SVG_ARROW_UP;
+                } else {
+                    content?.classList.add('collapsed');
+                    if (icon) icon.innerHTML = Visual.SVG_ARROW_DOWN;
+                }
+                const allExpanded = Object.values(this.blocksExpanded).every(s => s);
+                if (this.btnToggleBlocksEl) {
+                    this.btnToggleBlocksEl.innerHTML = allExpanded ? Visual.SVG_TOGGLE_COLLAPSE : Visual.SVG_TOGGLE_EXPAND;
+                    this.btnToggleBlocksEl.setAttribute('data-expanded', String(allExpanded));
+                }
+                return;
+            }
+
+            // --- Block item click (selection) ---
+            const item = target.closest('.block-item') as HTMLElement | null;
+            if (!item) return;
+            const blockId = item.getAttribute('data-id');
+            const indexStr = item.getAttribute('data-index');
+            const valStr = item.getAttribute('data-val');
+            if (!blockId || !indexStr || !valStr) return;
+            const idx = parseInt(indexStr);
+            const selSet = this.viewMode === 'last' ? this.lastSelections : this.selections;
+
+            if (this.viewMode === 'last') {
+                const wasSelected = selSet[blockId].has(valStr);
+                for (const bid of Visual.BLOCK_IDS) selSet[bid].clear();
+                if (!wasSelected) selSet[blockId].add(valStr);
+                this.lastSelectedIndex[blockId] = idx;
+            } else if (e.shiftKey && this.lastSelectedIndex[blockId] !== null) {
+                const start = Math.min(this.lastSelectedIndex[blockId]!, idx);
+                const end = Math.max(this.lastSelectedIndex[blockId]!, idx);
+                const items = this.renderedBlockItems[blockId] || [];
+                for (let i = start; i <= end && i < items.length; i++) {
+                    selSet[blockId].add(items[i]);
+                }
+            } else {
+                if (selSet[blockId].has(valStr)) {
+                    selSet[blockId].delete(valStr);
+                    this.lastSelectedIndex[blockId] = null;
+                } else {
+                    selSet[blockId].add(valStr);
+                    this.lastSelectedIndex[blockId] = idx;
+                }
+            }
+            this.refreshUI(true);
+        });
+
+        // Change delegation: date inputs
+        panel.addEventListener('change', (e: Event) => {
+            const target = e.target as HTMLInputElement;
+            if (target.id === 'date-from') {
+                this.dateFrom = target.value ? new Date(target.value + 'T00:00:00') : null;
+                this.refreshUI(true);
+            } else if (target.id === 'date-to') {
+                this.dateTo = target.value ? new Date(target.value + 'T00:00:00') : null;
+                this.refreshUI(true);
+            }
+        });
+    }
+
     private renderDynamicContent(dateInfo: DisplayInfo) {
         const mainPanel = this.mainPanelEl;
         const btnCollapse = this.btnCollapseEl;
@@ -512,15 +628,6 @@ export class Visual implements IVisual {
             }
         }
 
-        // Capture current scroll positions to avoid resetting to left
-        const scrollPositions: { [key: string]: number } = {};
-        if (this.dataViewParsed && mainPanel) {
-            Visual.BLOCK_IDS.forEach(blockId => {
-                const contentNode = mainPanel.querySelector(`#content-${blockId}`);
-                if (contentNode) scrollPositions[blockId] = contentNode.scrollLeft;
-            });
-        }
-
         if (!this.dataViewParsed) {
             this.mainPanelExpanded = true;
             if (mainPanel) mainPanel.classList.remove('collapsed');
@@ -529,6 +636,47 @@ export class Visual implements IVisual {
         }
 
         const currentSelections = this.viewMode === 'last' ? this.lastSelections : this.selections;
+        const isLast = this.viewMode === 'last';
+        const minBound = this.formatDateForInput(dateInfo.minDate);
+        const maxBound = this.formatDateForInput(dateInfo.maxDate);
+
+        // --- P4: Check if structural rebuild is needed (DOM diffing) ---
+        const dateBoundsKey = `${minBound}|${maxBound}`;
+        const itemsUnchanged = this.renderedViewMode === this.viewMode &&
+            this.renderedDateBounds === dateBoundsKey &&
+            Visual.BLOCK_IDS.every(id => {
+                const key = id === 'year' ? 'years' : id === 'quarter' ? 'quarters' : id === 'month' ? 'months' : 'weeks';
+                const rendered = this.renderedBlockItems[id];
+                const incoming = dateInfo[key];
+                return rendered && rendered.length === incoming.length && rendered.every((v, i) => v === incoming[i]);
+            });
+
+        if (itemsUnchanged && mainPanel) {
+            // ► Fast path: only toggle selected classes + update status (no innerHTML, no reflow)
+            mainPanel.querySelectorAll('.block-item').forEach(el => {
+                const id = el.getAttribute('data-id')!;
+                const val = el.getAttribute('data-val')!;
+                el.classList.toggle('selected', currentSelections[id].has(val));
+            });
+            if (!isLast) {
+                const dFromEl = mainPanel.querySelector('#date-from') as HTMLInputElement;
+                const dToEl = mainPanel.querySelector('#date-to') as HTMLInputElement;
+                if (dFromEl) dFromEl.value = this.dateFrom ? this.formatDateForInput(this.dateFrom) : minBound;
+                if (dToEl) dToEl.value = this.dateTo ? this.formatDateForInput(this.dateTo) : maxBound;
+            }
+            this.updateFilterStatus(currentSelections);
+            return;
+        }
+
+        // ► Slow path: structural rebuild required
+        // Capture current scroll positions to restore after innerHTML
+        const scrollPositions: { [key: string]: number } = {};
+        if (mainPanel) {
+            Visual.BLOCK_IDS.forEach(blockId => {
+                const contentNode = mainPanel.querySelector(`#content-${blockId}`);
+                if (contentNode) scrollPositions[blockId] = contentNode.scrollLeft;
+            });
+        }
 
         const buildBlock = (id: string, label: string, items: string[]) => {
             const isExpanded = this.blocksExpanded[id];
@@ -553,7 +701,6 @@ export class Visual implements IVisual {
             `;
         };
 
-        const isLast = this.viewMode === 'last';
         let html = '';
         html += buildBlock('year', isLast ? 'Year (last)' : 'Year', dateInfo.years);
         html += buildBlock('quarter', isLast ? 'Quarter (last)' : 'Quarter', dateInfo.quarters);
@@ -561,9 +708,6 @@ export class Visual implements IVisual {
         html += buildBlock('week', isLast ? 'Week (last)' : 'Week', dateInfo.weeks);
 
         // Date inputs block
-        const minBound = this.formatDateForInput(dateInfo.minDate);
-        const maxBound = this.formatDateForInput(dateInfo.maxDate);
-
         if (isLast) {
             const fromVal = minBound || this.formatDateForInput(new Date());
             const toVal = maxBound || this.formatDateForInput(new Date());
@@ -593,109 +737,32 @@ export class Visual implements IVisual {
         if (mainPanel) {
             mainPanel.innerHTML = html;
 
-            // Update filter status indicator
-            const filterStatus = this.filterStatusEl;
-            if (filterStatus) {
-                const cs = this.viewMode === 'last' ? this.lastSelections : this.selections;
-                const activeFilters: string[] = [];
-                if (cs.year.size > 0) activeFilters.push('YR');
-                if (cs.quarter.size > 0) activeFilters.push('QT');
-                if (cs.month.size > 0) activeFilters.push('MT');
-                if (cs.week.size > 0) activeFilters.push('WK');
-                if (this.dateFrom || this.dateTo) activeFilters.push('DT');
-                const prefix = this.viewMode === 'last' ? 'Last: ' : 'Filters: ';
-                filterStatus.textContent = activeFilters.length > 0 ? prefix + activeFilters.join(', ') : 'No date filters applied';
-                filterStatus.classList.toggle('active', activeFilters.length > 0);
-            }
-
             // Restore scroll positions
             Visual.BLOCK_IDS.forEach(blockId => {
-                if (scrollPositions[blockId]) {
+                if (scrollPositions[blockId] !== undefined) {
                     const contentNode = mainPanel.querySelector(`#content-${blockId}`);
                     if (contentNode) contentNode.scrollLeft = scrollPositions[blockId];
                 }
             });
+
+            // Bind delegated event listeners once (P4)
+            if (!this.delegatedListenersBound) {
+                this.bindDelegatedListeners();
+                this.delegatedListenersBound = true;
+            }
         }
 
-        // Bind dynamic event listeners
-        Visual.BLOCK_IDS.forEach(blockId => {
-            const header = this.target.querySelector(`#header-${blockId}`);
-            const content = this.target.querySelector(`#content-${blockId}`);
-            const icon = this.target.querySelector(`#icon-${blockId}`);
+        // Cache rendered state for fast-path diffing
+        this.renderedBlockItems = {
+            year: dateInfo.years.slice(),
+            quarter: dateInfo.quarters.slice(),
+            month: dateInfo.months.slice(),
+            week: dateInfo.weeks.slice()
+        };
+        this.renderedViewMode = this.viewMode;
+        this.renderedDateBounds = dateBoundsKey;
 
-            header?.addEventListener('click', () => {
-                this.blocksExpanded[blockId] = !this.blocksExpanded[blockId];
-                if (this.blocksExpanded[blockId]) {
-                    content?.classList.remove('collapsed');
-                    if (icon) icon.innerHTML = Visual.SVG_ARROW_UP;
-                } else {
-                    content?.classList.add('collapsed');
-                    if (icon) icon.innerHTML = Visual.SVG_ARROW_DOWN;
-                }
-            });
-        });
-
-        // Date input listeners
-        const dFrom = this.target.querySelector('#date-from') as HTMLInputElement;
-        const dTo = this.target.querySelector('#date-to') as HTMLInputElement;
-
-        dFrom?.addEventListener('change', () => {
-            this.dateFrom = dFrom.value ? new Date(dFrom.value + 'T00:00:00') : null;
-            this.refreshUI(true);
-        });
-
-        dTo?.addEventListener('change', () => {
-            this.dateTo = dTo.value ? new Date(dTo.value + 'T00:00:00') : null;
-            this.refreshUI(true);
-        });
-
-        const blockItems = this.target.querySelectorAll('.block-item');
-        const selSet = this.viewMode === 'last' ? this.lastSelections : this.selections;
-        blockItems.forEach(item => {
-            item.addEventListener('click', (e: Event) => {
-                const mouseEvent = e as MouseEvent;
-                const target = mouseEvent.target as HTMLElement;
-                const blockId = target.getAttribute('data-id');
-                const indexStr = target.getAttribute('data-index');
-                const valStr = target.getAttribute('data-val');
-
-                if (!blockId || !indexStr || !valStr) return;
-                const idx = parseInt(indexStr);
-
-                if (this.viewMode === 'last') {
-                    // Global single-select in Last mode: only one item across all blocks
-                    const wasSelected = selSet[blockId].has(valStr);
-                    // Clear ALL blocks
-                    for (const bid of Visual.BLOCK_IDS) selSet[bid].clear();
-                    if (!wasSelected) {
-                        selSet[blockId].add(valStr);
-                    }
-                    this.lastSelectedIndex[blockId] = idx;
-                } else if (mouseEvent.shiftKey && this.lastSelectedIndex[blockId] !== null) {
-                    const start = Math.min(this.lastSelectedIndex[blockId]!, idx);
-                    const end = Math.max(this.lastSelectedIndex[blockId]!, idx);
-
-                    const currentGroupItems = Array.from(this.target.querySelectorAll(`.block-item[data-id="${blockId}"]`));
-                    currentGroupItems.forEach((el) => {
-                        const elIdx = parseInt(el.getAttribute('data-index')!);
-                        const elVal = el.getAttribute('data-val')!;
-                        if (elIdx >= start && elIdx <= end) {
-                            selSet[blockId].add(elVal);
-                        }
-                    });
-                } else {
-                    if (selSet[blockId].has(valStr)) {
-                        selSet[blockId].delete(valStr);
-                        this.lastSelectedIndex[blockId] = null;
-                    } else {
-                        selSet[blockId].add(valStr);
-                        this.lastSelectedIndex[blockId] = idx;
-                    }
-                }
-
-                this.refreshUI(true);
-            });
-        });
+        this.updateFilterStatus(currentSelections);
     }
 
     public update(options: VisualUpdateOptions) {

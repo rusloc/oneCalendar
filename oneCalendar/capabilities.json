@@ -1,5 +1,6 @@
 {
     "supportsHighlight": false,
+    "supportsSynchronizingFilterState": true,
     "dataRoles": [
         {
             "displayName": "Date Value",
