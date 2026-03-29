@@ -179,34 +179,14 @@ The visual accepts Date, DateTime, or parseable date strings. No measures requir
 
 ## Installation
 
-```bash
-git clone https://github.com/rusloc/oneCalendar.git
-cd oneCalendar
-npm install
-
-# Development
-pbiviz start
-
-# Package
-pbiviz package
-# Output: dist/oneCalendar.pbiviz
-```
-
 Import the `.pbiviz` file via **Visualizations pane > ... > Import a visual from a file**.
 
 ---
 
 ## Additional Features
 
-- **Sync Slicers** — filter state propagates across report pages
+- **Sync Slicers support** — filter state propagates across report pages
 - **Bookmark support** — selections are saved and restored with Power BI bookmarks
-- **Landing page** — branded welcome screen when no data is bound
-- **Hybrid filter engine** — uses lightweight min-max range filters for contiguous selections; falls back to enumerated date lists only for non-contiguous gaps
-- **Responsive scaling** — font size and layout adapt to the visual's viewport
 
 ---
 
-## Author
-
-**Kirill Bezzubkin**
-[LinkedIn](https://www.linkedin.com/in/kirill-bezzubkin-b6860b235) &middot; [GitHub](https://github.com/rusloc/oneCalendar)
