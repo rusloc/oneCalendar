@@ -5,14 +5,14 @@
         "guid": "oneCalendarD83DAFDDCC8D4309935B4488E6A78767",
         "visualClassName": "Visual",
         "version": "1.0.0.0",
-        "description": "",
-        "supportUrl": "",
-        "gitHubUrl": ""
+        "description": "A hierarchical date slicer for Power BI — filter by Year, Quarter, Month, Week, or exact date range in one compact visual.",
+        "supportUrl": "https://www.linkedin.com/in/kirill-bezzubkin-b6860b235",
+        "gitHubUrl": "https://github.com/rusloc/oneCalendar"
     },
     "apiVersion": "5.3.0",
     "author": {
-        "name": "",
-        "email": ""
+        "name": "Kirill Bezzubkin",
+        "email": "pimp.my.bi@gmail.com"
     },
     "assets": {
         "icon": "assets/icon.png"
